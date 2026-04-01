@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
 
   jenkins:
@@ -17,7 +19,7 @@ services:
     build: .
     environment:
       - APP_VERSION=${APP_VERSION}
-      - HEALTH_MODE=${HEALTH_MODE}   # vamos a simular casos exitosos y fallidos con esta variable de entorno
+      - HEALTH_MODE=${HEALTH_MODE}
     networks:
       - app_net
 
@@ -25,7 +27,7 @@ services:
     build: .
     environment:
       - APP_VERSION=${APP_VERSION}
-      - HEALTH_MODE=${HEALTH_MODE}   # vamos a simular casos exitosos y fallidos con esta variable de entorno
+      - HEALTH_MODE=${HEALTH_MODE}
     networks:
       - app_net
 
@@ -34,7 +36,7 @@ services:
     ports:
       - "3000:80"
     volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf
+      - ./nginx:/etc/nginx   # 🔥 FIX CLAVE
     depends_on:
       - blue
       - green

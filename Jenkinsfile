@@ -15,6 +15,16 @@ pipeline {
 
     stages {
 
+        stage('Verify nginx config') {
+            steps {
+                sh """
+                echo "Checking nginx config..."
+                ls -l nginx || (echo "nginx folder missing" && exit 1)
+                ls -l nginx/nginx.conf || (echo "nginx.conf missing" && exit 1)
+                """
+            }
+        }
+
         stage('Generate Version') {
             steps {
                 script {
@@ -38,7 +48,7 @@ pipeline {
                 script {
 
                     def activeRaw = sh(
-                        script: "grep -E 'server (blue|green):3000;' nginx.conf | grep -v '#' | sed -E 's/server (blue|green):3000;/\\1/'",
+                        script: "grep -E 'server (blue|green):3000;' nginx/nginx.conf | grep -v '#' | sed -E 's/server (blue|green):3000;/\\1/'",
                         returnStdout: true
                     ).trim()
 
@@ -67,7 +77,6 @@ pipeline {
                     export APP_VERSION=${VERSION}
                     export HEALTH_MODE=${params.HEALTH_MODE}
 
-                    # 🔥 Levanta nginx + target
                     docker compose up -d --build nginx ${env.TARGET}
                     """
 
@@ -101,14 +110,11 @@ pipeline {
                     echo "Switching traffic from ${env.ACTIVE} to ${env.TARGET}"
 
                     sh """
-                    # 🔥 Asegura que nginx esté corriendo
                     docker compose ps nginx | grep Up || docker compose up -d nginx
 
-                    # 🔁 Switch Blue/Green
-                    sed -i 's|server ${env.ACTIVE}:3000;|# server ${env.ACTIVE}:3000;|' nginx.conf
-                    sed -i 's|# server ${env.TARGET}:3000;|server ${env.TARGET}:3000;|' nginx.conf
+                    sed -i 's|server ${env.ACTIVE}:3000;|# server ${env.ACTIVE}:3000;|' nginx/nginx.conf
+                    sed -i 's|# server ${env.TARGET}:3000;|server ${env.TARGET}:3000;|' nginx/nginx.conf
 
-                    # 🔄 Reload seguro
                     docker compose restart nginx
                     """
                 }
