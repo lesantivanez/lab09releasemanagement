@@ -33,29 +33,45 @@ pipeline {
             }
         }
 
-        stage('Deploy Blue/Green') {
+        stage('Detect Active Environment') {
             steps {
                 script {
 
-                    def active = sh(
-                        script: "grep server nginx.conf | grep -v '#' | awk '{print \$2}' | cut -d: -f1",
+                    //  MÉTODO ROBUSTO (sin basura)
+                    def activeRaw = sh(
+                        script: "grep -E 'server (blue|green):3000;' nginx.conf | grep -v '#' | sed -E 's/server (blue|green):3000;/\\1/'",
                         returnStdout: true
                     ).trim()
 
-                    def target = (active == "blue") ? "green" : "blue"
+                    //  SANITIZACIÓN EXTRA
+                    def active = activeRaw.replaceAll("[^a-zA-Z]", "")
 
-                    echo "Active: ${active}"
-                    echo "Deploying to: ${target}"
+                    if (active != "blue" && active != "green") {
+                        error("Invalid active environment detected: '${activeRaw}'")
+                    }
+
+                    env.ACTIVE = active
+                    env.TARGET = (active == "blue") ? "green" : "blue"
+
+                    echo "Active: ${env.ACTIVE}"
+                    echo "Target: ${env.TARGET}"
+                }
+            }
+        }
+
+        stage('Deploy Blue/Green') {
+            steps {
+                script {
+                    echo "Deploying to: ${env.TARGET}"
                     echo "Health mode: ${params.HEALTH_MODE}"
 
                     sh """
                     export APP_VERSION=${VERSION}
                     export HEALTH_MODE=${params.HEALTH_MODE}
 
-                    docker compose up -d --build ${target}
+                    docker compose up -d --build ${env.TARGET}
                     """
 
-                    // pequeño tiempo inicial
                     sleep 5
                 }
             }
@@ -65,19 +81,12 @@ pipeline {
             steps {
                 script {
 
-                    def active = sh(
-                        script: "grep server nginx.conf | grep -v '#' | awk '{print \$2}' | cut -d: -f1",
-                        returnStdout: true
-                    ).trim()
-
-                    def target = (active == "blue") ? "green" : "blue"
-
-                    echo "Running health check on ${target}"
+                    echo "Running health check on ${env.TARGET}"
 
                     try {
                         retry(5) {
                             sleep 3
-                            sh "docker compose exec ${target} curl -f localhost:3000/health"
+                            sh "docker compose exec ${env.TARGET} curl -f localhost:3000/health"
                         }
                     } catch (Exception e) {
                         error("Health check failed - aborting release")
@@ -89,18 +98,12 @@ pipeline {
         stage('Switch Traffic') {
             steps {
                 script {
-                    def active = sh(
-                        script: "grep server nginx.conf | grep -v '#' | awk '{print \$2}' | cut -d: -f1",
-                        returnStdout: true
-                    ).trim()
 
-                    def target = (active == "blue") ? "green" : "blue"
-
-                    echo "Switching traffic from ${active} to ${target}"
+                    echo "Switching traffic from ${env.ACTIVE} to ${env.TARGET}"
 
                     sh """
-                    sed -i 's|server ${active}:3000;|# server ${active}:3000;|' nginx.conf
-                    sed -i 's|# server ${target}:3000;|server ${target}:3000;|' nginx.conf
+                    sed -i 's|server ${env.ACTIVE}:3000;|# server ${env.ACTIVE}:3000;|' nginx.conf
+                    sed -i 's|# server ${env.TARGET}:3000;|server ${env.TARGET}:3000;|' nginx.conf
 
                     docker compose exec nginx nginx -s reload
                     """
@@ -118,6 +121,15 @@ pipeline {
                 git push origin v${VERSION}
                 """
             }
+        }
+    }
+
+    post {
+        failure {
+            echo "❌ Deployment failed. No traffic switch applied."
+        }
+        success {
+            echo "✅ Deployment successful. Traffic switched to ${env.TARGET}"
         }
     }
 }
