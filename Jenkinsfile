@@ -2,7 +2,6 @@ pipeline {
     agent any
 
     environment {
-        IMAGE_NAME = "devops-lab-app"
         VERSION = ""
     }
 
@@ -20,19 +19,70 @@ pipeline {
             }
         }
 
-        stage('Build Image') {
+        stage('Build') {
             steps {
-                sh "docker build -t ${IMAGE_NAME}:${VERSION} ."
+                sh "docker compose build"
             }
         }
 
-        stage('Deploy') {
+        stage('Deploy Blue/Green') {
             steps {
-                sh """
-                export APP_VERSION=${VERSION}
-                docker compose down
-                docker compose up -d --build
-                """
+                script {
+
+                    def active = sh(
+                        script: "grep server nginx.conf | grep -v '#' | awk '{print \$2}' | cut -d: -f1",
+                        returnStdout: true
+                    ).trim()
+
+                    def target = (active == "blue") ? "green" : "blue"
+
+                    echo "Active: ${active}"
+                    echo "Deploying to: ${target}"
+
+                    sh """
+                    export APP_VERSION=${VERSION}
+
+                    docker compose up -d --build ${target}
+
+                    sleep 5
+                    """
+                }
+            }
+        }
+
+        stage('Health Check') {
+            steps {
+                script {
+                    def status = sh(
+                        script: "curl -s http://localhost:3000",
+                        returnStatus: true
+                    )
+
+                    if (status != 0) {
+                        error("Health check failed - aborting release")
+                    }
+                }
+            }
+        }
+
+        stage('Switch Traffic') {
+            steps {
+                script {
+
+                    def active = sh(
+                        script: "grep server nginx.conf | grep -v '#' | awk '{print \$2}' | cut -d: -f1",
+                        returnStdout: true
+                    ).trim()
+
+                    def target = (active == "blue") ? "green" : "blue"
+
+                    sh """
+                    sed -i 's/server ${active}:3000;/# server ${active}:3000;/' nginx.conf
+                    sed -i 's/# server ${target}:3000;/server ${target}:3000;/' nginx.conf
+
+                    docker compose exec nginx nginx -s reload
+                    """
+                }
             }
         }
 
