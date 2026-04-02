@@ -28,10 +28,7 @@ pipeline {
         stage('Generate Version') {
             steps {
                 script {
-                    VERSION = sh(
-                        script: "date +%Y.%m.%d.%H%M",
-                        returnStdout: true
-                    ).trim()
+                    VERSION = sh(script: "date +%Y.%m.%d.%H%M", returnStdout: true).trim()
                     env.APP_VERSION = VERSION
                 }
             }
@@ -46,12 +43,10 @@ pipeline {
         stage('Detect Active Environment') {
             steps {
                 script {
-
                     def activeRaw = sh(
                         script: "grep -E 'server (blue|green):3000;' nginx/nginx.conf | grep -v '#' | sed -E 's/server (blue|green):3000;/\\1/'",
                         returnStdout: true
                     ).trim()
-
                     def active = activeRaw.replaceAll("[^a-zA-Z]", "")
 
                     if (active != "blue" && active != "green") {
@@ -77,9 +72,15 @@ pipeline {
                     export APP_VERSION=${VERSION}
                     export HEALTH_MODE=${params.HEALTH_MODE}
 
-                    docker compose up -d --build nginx ${env.TARGET}
-                    """
+                    # Detener contenedor TARGET si está usando el puerto
+                    if docker ps --filter "name=${env.TARGET}" --format '{{.Names}}' | grep -q ${env.TARGET}; then
+                        echo "Stopping existing container ${env.TARGET}..."
+                        docker compose stop ${env.TARGET}
+                    fi
 
+                    # Levantar TARGET sin recrear si ya existe
+                    docker compose up -d --no-recreate ${env.TARGET}
+                    """
                     sleep 5
                 }
             }
@@ -88,7 +89,6 @@ pipeline {
         stage('Health Check PRO') {
             steps {
                 script {
-
                     echo "Running health check on ${env.TARGET}"
 
                     try {
@@ -106,12 +106,13 @@ pipeline {
         stage('Switch Traffic') {
             steps {
                 script {
-
                     echo "Switching traffic from ${env.ACTIVE} to ${env.TARGET}"
 
                     sh """
+                    # Asegura que nginx esté corriendo
                     docker compose ps nginx | grep Up || docker compose up -d nginx
 
+                    # Cambia el tráfico en nginx
                     sed -i 's|server ${env.ACTIVE}:3000;|# server ${env.ACTIVE}:3000;|' nginx/nginx.conf
                     sed -i 's|# server ${env.TARGET}:3000;|server ${env.TARGET}:3000;|' nginx/nginx.conf
 
@@ -121,15 +122,9 @@ pipeline {
             }
         }
 
-        stage('Tag Release') {
+        stage('Tag Release (Skipped)') {
             steps {
-                sh """
-                git config user.email "jenkins@local"
-                git config user.name "jenkins"
-
-                git tag v${VERSION}
-                git push origin v${VERSION}
-                """
+                echo "Skipping Git tag - no GitHub credentials configured"
             }
         }
     }
